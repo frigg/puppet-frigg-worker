@@ -1,0 +1,110 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Start daemon at boot time
+# Description:       Enable service provided by daemon.
+### END INIT INFO
+
+dir="/opt/frigg-worker"
+user="<%= @user %>"
+cmd="/opt/frigg-worker/bin/frigg-worker <%= @mode %> --dispatcher-token=<%= @dispatcher_token %> --hq-token=<%= @hq_token %> --dispatcher-url=<%= @dispatcher_url %> --hq-url=<%= @hq_url %> --sentry-dsn=<%= @sentry_dsn %> --slack-url=<%= @slack_url %>"
+
+name=`basename $0`
+pid_file="/var/run/$name"
+log_dir="/var/log/$name"
+
+get_pid() {
+    cat "$pid_file$1.pid"
+}
+
+is_running() {
+    [ -f "$pid_file$1.pid" ] && ps `get_pid $1` > /dev/null 2>&1
+}
+
+_start() {
+  if is_running $1; then
+    echo "Already started $1"
+  else
+    echo "Starting $name$1"
+    cd "$dir"
+    sudo -u "$user" $cmd >> "$log_dir/$1.log" 2>> "$log_dir/$1.err" &
+    echo $! > "$pid_file$1.pid"
+    if ! is_running $1; then
+        echo "Unable to start, see $log_dir/$1.log and $log_dir/$1.err"
+        exit 1
+    fi
+  fi
+}
+
+_stop() {
+  if is_running $1; then
+    echo -n "Stopping $name$1.."
+    kill `get_pid $1`
+    for i in {1..10}
+    do
+        if ! is_running $1; then
+            break
+        fi
+
+        echo -n "."
+        sleep 1
+    done
+    echo
+
+    if is_running $1; then
+        echo "Not stopped; may still be shutting down or shutdown may have failed"
+        exit 1
+    else
+        echo "Stopped $name$1"
+        if [ -f "$pid_file$1.pid" ]; then
+            rm "$pid_file$1.pid"
+        fi
+    fi
+  else
+      echo "Not running $1"
+  fi
+}
+
+_status() {
+    if is_running $1; then
+        echo "Running $name$1"
+    else
+        echo "Stopped $name$1"
+    fi
+}
+
+case "$1" in
+    start)
+    <% Array(0...@num_workers.to_i).each do |num| -%>
+      _start <%= num %>
+    <% end -%>
+    ;;
+    stop)
+    <% Array(0...@num_workers.to_i).each do |num| -%>
+      _stop <%= num %>
+    <% end -%>
+    ;;
+    restart)
+    $0 stop
+    if is_running 1 || is_running 2 || is_running 3 || is_running 4; then
+        echo "Unable to stop, will not attempt to start"
+        exit 1
+    fi
+    $0 start
+    ;;
+    status)
+    <% Array(0...@num_workers.to_i).each do |num| -%>
+      _status <%= num %>
+    <% end -%>
+    ;;
+    *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
